@@ -19,8 +19,8 @@ def wav_bytes(frames=1600):
     return b.getvalue()
 
 
-def make_zip(path: Path, speaker="SP001", bad_audio=False):
-    audio = b"not wav" if bad_audio else wav_bytes()
+def make_zip(path: Path, speaker="SP001", bad_audio=False, frames=1600):
+    audio = b"not wav" if bad_audio else wav_bytes(frames)
     sentences = "sentence_id,text,category,difficulty,length_bucket,notes\nS000001,你好,日常,short,short,\n"
     corpus = {"corpus_id": "c1", "corpus_version": "1", "corpus_hash": hashlib.sha256("S000001\x1f你好\x1f日常\x1fshort\x1fshort\x1f\n".encode()).hexdigest()}
     manifest = {"schema_version":"1.0", "export_id":f"export-{speaker}", "corpus_id":"c1", "corpus_version":"1", "corpus_hash":corpus["corpus_hash"], "speaker_id":speaker, "completed_count":1}
@@ -59,8 +59,7 @@ class DatasetToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             one, two, out = Path(d)/"one.zip", Path(d)/"two.zip", Path(d)/"out"
             make_zip(one, "SP001")
-            make_zip(two, "SP001")
-            with zipfile.ZipFile(two, "a") as z: z.writestr("wav/S000001.wav", wav_bytes(800))
+            make_zip(two, "SP001", frames=800)
             result = merge_datasets([one, two], out)
             self.assertTrue(result.conflicts)
 

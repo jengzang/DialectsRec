@@ -13,7 +13,8 @@ class CorpusGenerationTests(unittest.TestCase):
             out = Path(d) / "sentences.csv"
             manifest = Path(d) / "manifest.json"
             generate(out, manifest)
-            rows = list(csv.DictReader(out.open(encoding="utf-8", newline="")))
+            with out.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
             self.assertEqual(EXPECTED_COUNT, len(rows))
             self.assertEqual([f"S{i:06d}" for i in range(1, EXPECTED_COUNT + 1)], [r["sentence_id"] for r in rows])
             self.assertEqual(3500, sum(r["difficulty"] == "short" for r in rows))
