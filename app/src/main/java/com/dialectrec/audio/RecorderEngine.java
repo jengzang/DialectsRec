@@ -9,10 +9,11 @@ import java.util.UUID;
 
 public final class RecorderEngine {
     public interface Listener { void onError(String message); }
-    private static final long MAX_DURATION_MS = 60_000L; private final Listener listener; private AudioRecord recorder; private Thread thread; private File pcmFile; private int actualRate; private volatile boolean recording; private volatile boolean limitReached;
+    private static final long MAX_DURATION_MS = 60_000L; private final Listener listener; private AudioRecord recorder; private Thread thread; private File pcmFile; private int actualRate; private String sourceName; private volatile boolean recording; private volatile boolean limitReached;
     public RecorderEngine(Listener listener) { this.listener = listener; }
     public synchronized boolean isRecording() { return recorder != null && (recording || limitReached); }
     public synchronized int captureRate() { return actualRate; }
+    public synchronized String audioSource() { return sourceName == null ? "" : sourceName; }
     @SuppressLint("MissingPermission")
     public synchronized boolean start(File directory) {
         if (recording) return false;
@@ -20,8 +21,8 @@ public final class RecorderEngine {
         for (int rate : rates) {
             int min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
             if (min <= 0) continue;
-            try { recorder = new AudioRecord(MediaRecorder.AudioSource.UNPROCESSED, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 2, 4096)); if (recorder.getState() == AudioRecord.STATE_INITIALIZED) { actualRate=rate; break; } recorder.release(); recorder=null; } catch (Exception ignored) { }
-            try { recorder = new AudioRecord(MediaRecorder.AudioSource.MIC, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 2, 4096)); if (recorder.getState() == AudioRecord.STATE_INITIALIZED) { actualRate=rate; break; } recorder.release(); recorder=null; } catch (Exception ignored) { }
+            try { recorder = new AudioRecord(MediaRecorder.AudioSource.UNPROCESSED, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 2, 4096)); if (recorder.getState() == AudioRecord.STATE_INITIALIZED) { actualRate=rate; sourceName="UNPROCESSED"; break; } recorder.release(); recorder=null; } catch (Exception ignored) { }
+            try { recorder = new AudioRecord(MediaRecorder.AudioSource.MIC, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 2, 4096)); if (recorder.getState() == AudioRecord.STATE_INITIALIZED) { actualRate=rate; sourceName="MIC"; break; } recorder.release(); recorder=null; } catch (Exception ignored) { }
         }
         if (recorder == null) { listener.onError("录音设备初始化失败"); return false; }
         directory.mkdirs(); pcmFile = new File(directory, UUID.randomUUID() + ".pcm.tmp"); recording=true; limitReached=false; recorder.startRecording();

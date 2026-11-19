@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 import zipfile
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,9 +28,24 @@ def _rows(z, name):
     with z.open(name) as raw: return list(csv.DictReader(__import__('io').TextIOWrapper(raw, encoding='utf-8', newline='')))
 
 
+def _safe_component(value: str, used: dict[str, str]) -> str:
+    """Return a traversal-safe component, adding a suffix on sanitization collisions."""
+    original = value or "unknown"
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", original).strip(".") or "unknown"
+    owner = used.get(base)
+    if owner is None or owner == original:
+        used[base] = original
+        return base
+    suffix = hashlib.sha256(original.encode("utf-8")).hexdigest()[:10]
+    candidate = f"{base}_{suffix}"
+    used[candidate] = original
+    return candidate
+
+
 def merge_datasets(inputs, output: str | Path) -> MergeResult:
     result = MergeResult(); output = Path(output); output.mkdir(parents=True, exist_ok=True); (output / "wav").mkdir(exist_ok=True)
-    base_identity = None; sentence_rows = []; speakers = []; recordings = []; progress = []; seen_audio = {}
+    base_identity = None; sentence_rows = []; speakers = []; recordings = []; progress_by_key = {}; seen_audio = {}
+    speaker_paths = {}; sentence_paths = {}
     for source in inputs:
         check = validate_dataset(source)
         if check.errors: result.conflicts.extend(f"{source}: {e}" for e in check.errors); continue
@@ -46,10 +62,20 @@ def merge_datasets(inputs, output: str | Path) -> MergeResult:
                 if key in seen_audio:
                     if seen_audio[key] != digest: result.conflicts.append(f"different audio for {sid}/{rec['sentence_id']}")
                     continue
-                seen_audio[key] = digest; target = output / "wav" / sid / f"{rec['sentence_id']}.wav"; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
-                rec = dict(rec); rec["audio_path"] = f"wav/{sid}/{rec['sentence_id']}.wav"; recordings.append(rec)
+                seen_audio[key] = digest
+                safe_sid = speaker_paths.setdefault(sid, _safe_component(sid, {v: k for k, v in speaker_paths.items()}))
+                safe_sentence = sentence_paths.setdefault(rec["sentence_id"], _safe_component(rec["sentence_id"], {v: k for k, v in sentence_paths.items()}))
+                target = output / "wav" / safe_sid / f"{safe_sentence}.wav"; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
+                rec = dict(rec); rec["audio_path"] = f"wav/{safe_sid}/{safe_sentence}.wav"; recordings.append(rec)
             for row in _rows(z, "progress.csv"):
-                row = dict(row); row["speaker_id"] = sid; progress.append(row)
+                row = dict(row); row["speaker_id"] = sid
+                key = (sid, row.get("sentence_id", ""))
+                previous = progress_by_key.get(key)
+                if previous is None:
+                    progress_by_key[key] = row
+                elif {k: previous.get(k, "") for k in row if k != "speaker_id"} != {k: row.get(k, "") for k in row if k != "speaker_id"}:
+                    result.conflicts.append(f"different progress for {sid}/{row.get('sentence_id', '')}")
+    progress = list(progress_by_key.values())
     with (output / "sentences.csv").open("w", encoding="utf-8", newline="") as f:
         if sentence_rows: w = csv.DictWriter(f, fieldnames=sentence_rows[0].keys()); w.writeheader(); w.writerows(sentence_rows)
     with (output / "speakers.csv").open("w", encoding="utf-8", newline="") as f:

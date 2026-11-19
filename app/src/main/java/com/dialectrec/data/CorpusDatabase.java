@@ -11,18 +11,35 @@ import java.util.regex.*;
 
 public final class CorpusDatabase extends SQLiteOpenHelper {
     private static final String DB="dialect_recorder.db";
-    public CorpusDatabase(Context c) { super(c, DB, null, 2); }
+    public CorpusDatabase(Context c) { super(c, DB, null, 3); }
     @Override public void onConfigure(SQLiteDatabase db) { super.onConfigure(db); db.setForeignKeyConstraintsEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE corpus(corpus_id TEXT NOT NULL, corpus_version TEXT NOT NULL, corpus_hash TEXT NOT NULL, title TEXT, sentence_count INTEGER, PRIMARY KEY(corpus_id,corpus_version))");
         db.execSQL("CREATE TABLE sentence(corpus_id TEXT, corpus_version TEXT, sentence_id TEXT, text TEXT, category TEXT, difficulty TEXT, order_index INTEGER, PRIMARY KEY(corpus_id,corpus_version,sentence_id))");
         db.execSQL("CREATE TABLE speaker(speaker_id TEXT PRIMARY KEY, dialect TEXT, local_uuid TEXT)");
         db.execSQL("CREATE TABLE progress(speaker_id TEXT, corpus_id TEXT, corpus_version TEXT, sentence_id TEXT, status TEXT, selected_recording_id TEXT, skip_reason TEXT, review_flag INTEGER DEFAULT 0, updated_at INTEGER, PRIMARY KEY(speaker_id,corpus_id,corpus_version,sentence_id), FOREIGN KEY(speaker_id) REFERENCES speaker(speaker_id), FOREIGN KEY(corpus_id,corpus_version,sentence_id) REFERENCES sentence(corpus_id,corpus_version,sentence_id))");
-        db.execSQL("CREATE TABLE recording(recording_id TEXT PRIMARY KEY, speaker_id TEXT, corpus_id TEXT, corpus_version TEXT, sentence_id TEXT, wav_path TEXT, duration_ms INTEGER, sample_rate INTEGER, bits INTEGER, channels INTEGER, capture_rate INTEGER, audio_sha256 TEXT, status TEXT, selected INTEGER, review_flag INTEGER, spoken_transcript TEXT, transcription_status TEXT, take_no INTEGER, created_at INTEGER, FOREIGN KEY(speaker_id) REFERENCES speaker(speaker_id), FOREIGN KEY(corpus_id,corpus_version,sentence_id) REFERENCES sentence(corpus_id,corpus_version,sentence_id))");
+        db.execSQL("CREATE TABLE recording(recording_id TEXT PRIMARY KEY, speaker_id TEXT, corpus_id TEXT, corpus_version TEXT, sentence_id TEXT, wav_path TEXT, duration_ms INTEGER, sample_rate INTEGER, bits INTEGER, channels INTEGER, capture_rate INTEGER, audio_source TEXT, audio_sha256 TEXT, status TEXT, selected INTEGER, review_flag INTEGER, spoken_transcript TEXT, transcription_status TEXT, take_no INTEGER, created_at INTEGER, FOREIGN KEY(speaker_id) REFERENCES speaker(speaker_id), FOREIGN KEY(corpus_id,corpus_version,sentence_id) REFERENCES sentence(corpus_id,corpus_version,sentence_id))");
         db.execSQL("CREATE UNIQUE INDEX selected_recording_per_sentence ON recording(speaker_id,corpus_id,corpus_version,sentence_id) WHERE selected=1");
         db.execSQL("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT)");
     }
-    @Override public void onUpgrade(SQLiteDatabase db,int oldV,int newV) { if(oldV<2){db.execSQL("UPDATE recording SET selected=0 WHERE selected=1 AND recording_id NOT IN (SELECT MAX(recording_id) FROM recording WHERE selected=1 GROUP BY speaker_id,corpus_id,corpus_version,sentence_id)");db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS selected_recording_per_sentence ON recording(speaker_id,corpus_id,corpus_version,sentence_id) WHERE selected=1");} }
+    @Override public void onUpgrade(SQLiteDatabase db,int oldV,int newV) {
+        if(oldV<2){
+            // v1 had no uniqueness constraint. Rebuild selection from the durable
+            // progress pointer so an upgrade never silently chooses another take.
+            db.beginTransaction();
+            try {
+                db.execSQL("CREATE TEMP TABLE legacy_selected AS SELECT recording_id,speaker_id,corpus_id,corpus_version,sentence_id,created_at FROM recording WHERE selected=1");
+                db.execSQL("UPDATE recording SET selected=0");
+                db.execSQL("UPDATE recording SET selected=1 WHERE recording_id IN (SELECT r.recording_id FROM recording r JOIN progress p ON p.selected_recording_id=r.recording_id AND p.speaker_id=r.speaker_id AND p.corpus_id=r.corpus_id AND p.corpus_version=r.corpus_version AND p.sentence_id=r.sentence_id WHERE p.status='completed')");
+                // Older rows created before progress pointers existed are retained
+                // by selecting the newest legacy take for each sentence.
+                db.execSQL("UPDATE recording SET selected=1 WHERE recording_id IN (SELECT l.recording_id FROM legacy_selected l WHERE NOT EXISTS (SELECT 1 FROM progress p WHERE p.speaker_id=l.speaker_id AND p.corpus_id=l.corpus_id AND p.corpus_version=l.corpus_version AND p.sentence_id=l.sentence_id AND p.status='completed' AND p.selected_recording_id IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM legacy_selected newer WHERE newer.speaker_id=l.speaker_id AND newer.corpus_id=l.corpus_id AND newer.corpus_version=l.corpus_version AND newer.sentence_id=l.sentence_id AND (newer.created_at>l.created_at OR (newer.created_at=l.created_at AND newer.recording_id>l.recording_id))))");
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS selected_recording_per_sentence ON recording(speaker_id,corpus_id,corpus_version,sentence_id) WHERE selected=1");
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+        }
+        if(oldV<3) db.execSQL("ALTER TABLE recording ADD COLUMN audio_source TEXT");
+    }
     private static byte[] readAll(InputStream in) throws IOException { ByteArrayOutputStream b=new ByteArrayOutputStream(); byte[] buf=new byte[8192]; int n; while((n=in.read(buf))>=0){if(n>0)b.write(buf,0,n);} return b.toByteArray(); }
     public void seed(Context context) throws Exception {
         if (getSetting("seeded") != null) return;
@@ -49,7 +66,8 @@ public final class CorpusDatabase extends SQLiteOpenHelper {
         String q="SELECT COUNT(*) FROM sentence s LEFT JOIN progress p ON p.sentence_id=s.sentence_id AND p.speaker_id=? AND p.corpus_id=? AND p.corpus_version=? WHERE s.corpus_id=? AND s.corpus_version=? AND ("+condition+")";
         try(Cursor c=getReadableDatabase().rawQuery(q,new String[]{sid,cid,ver,cid,ver})){return c.moveToFirst()?c.getInt(0):0;}
     }
-    public void skip(String sentenceId,String reason){ContentValues v=new ContentValues();v.put("speaker_id",getSetting("speaker_id"));v.put("corpus_id",getSetting("corpus_id"));v.put("corpus_version",getSetting("corpus_version"));v.put("sentence_id",sentenceId);v.put("status","skipped");v.put("skip_reason",reason);v.put("updated_at",System.currentTimeMillis());getWritableDatabase().insertWithOnConflict("progress",null,v,SQLiteDatabase.CONFLICT_REPLACE);}
+    public String statusFor(String sentenceId){String sid=getSetting("speaker_id"),cid=getSetting("corpus_id"),ver=getSetting("corpus_version");try(Cursor c=getReadableDatabase().rawQuery("SELECT COALESCE(status,'not_recorded') FROM progress WHERE speaker_id=? AND corpus_id=? AND corpus_version=? AND sentence_id=?",new String[]{sid,cid,ver,sentenceId})){return c.moveToFirst()?c.getString(0):"not_recorded";}}
+    public void skip(String sentenceId,String reason){SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{String sid=getSetting("speaker_id"),cid=getSetting("corpus_id"),ver=getSetting("corpus_version");db.execSQL("UPDATE recording SET selected=0 WHERE speaker_id=? AND corpus_id=? AND corpus_version=? AND sentence_id=?",new String[]{sid,cid,ver,sentenceId});ContentValues v=new ContentValues();v.put("speaker_id",sid);v.put("corpus_id",cid);v.put("corpus_version",ver);v.put("sentence_id",sentenceId);v.put("status","skipped");v.putNull("selected_recording_id");v.put("skip_reason",reason);v.put("updated_at",System.currentTimeMillis());db.insertWithOnConflict("progress",null,v,SQLiteDatabase.CONFLICT_REPLACE);db.setTransactionSuccessful();}finally{db.endTransaction();}}
     public String importCorpus(InputStream input, String title, boolean csv) throws Exception {
         List<Sentence> rows=new ArrayList<>();
         if(csv){
@@ -63,13 +81,13 @@ public final class CorpusDatabase extends SQLiteOpenHelper {
         setSetting("corpus_id",corpusId); setSetting("corpus_version",version); return corpusId;
     }
 
-    public void saveRecording(String id,String sentenceId,String path,long duration,int captureRate){
+    public void saveRecording(String id,String sentenceId,String path,long duration,int captureRate,String audioSource,String audioSha256){
         SQLiteDatabase db=getWritableDatabase(); db.beginTransaction();
         try{
             String sid=getSetting("speaker_id"), cid=getSetting("corpus_id"), ver=getSetting("corpus_version"); int take=1;
             try(Cursor c=db.rawQuery("SELECT COALESCE(MAX(take_no),0)+1 FROM recording WHERE speaker_id=? AND corpus_id=? AND corpus_version=? AND sentence_id=?",new String[]{sid,cid,ver,sentenceId})){if(c.moveToFirst())take=c.getInt(0);}
             db.execSQL("UPDATE recording SET selected=0 WHERE speaker_id=? AND corpus_id=? AND corpus_version=? AND sentence_id=?",new String[]{sid,cid,ver,sentenceId});
-            ContentValues r=new ContentValues();r.put("recording_id",id);r.put("speaker_id",sid);r.put("corpus_id",cid);r.put("corpus_version",ver);r.put("sentence_id",sentenceId);r.put("wav_path",path);r.put("duration_ms",duration);r.put("sample_rate",16000);r.put("bits",16);r.put("channels",1);r.put("capture_rate",captureRate);r.put("status","completed");r.put("selected",1);r.put("transcription_status","not_annotated");r.put("take_no",take);r.put("created_at",System.currentTimeMillis());db.insertOrThrow("recording",null,r);
+            ContentValues r=new ContentValues();r.put("recording_id",id);r.put("speaker_id",sid);r.put("corpus_id",cid);r.put("corpus_version",ver);r.put("sentence_id",sentenceId);r.put("wav_path",path);r.put("duration_ms",duration);r.put("sample_rate",16000);r.put("bits",16);r.put("channels",1);r.put("capture_rate",captureRate);r.put("audio_source",audioSource);r.put("audio_sha256",audioSha256);r.put("status","completed");r.put("selected",1);r.put("transcription_status","not_annotated");r.put("take_no",take);r.put("created_at",System.currentTimeMillis());db.insertOrThrow("recording",null,r);
             ContentValues prog=new ContentValues();prog.put("speaker_id",sid);prog.put("corpus_id",cid);prog.put("corpus_version",ver);prog.put("sentence_id",sentenceId);prog.put("status","completed");prog.put("selected_recording_id",id);prog.put("updated_at",System.currentTimeMillis());db.insertWithOnConflict("progress",null,prog,SQLiteDatabase.CONFLICT_REPLACE);db.setTransactionSuccessful();
         } finally {db.endTransaction();}
     }

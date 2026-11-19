@@ -72,24 +72,30 @@ def validate_dataset(path: str | Path) -> ValidationResult:
         for key in ("corpus_id", "corpus_version", "corpus_hash"):
             if manifest.get(key) != corpus.get(key): result.errors.append(f"manifest/corpus mismatch: {key}")
         if manifest.get("speaker_id") != speaker.get("speaker_id"): result.errors.append("manifest/speaker mismatch")
-        sentence_set = set(ids); recording_ids = set(); paths = set()
+        sentence_set = set(ids); recording_ids = set(); paths = set(); recording_by_id = {}
         for row in recordings:
             rid, sid, audio = row.get("recording_id", ""), row.get("sentence_id", ""), row.get("audio_path", "")
             if rid in recording_ids: result.errors.append(f"duplicate recording_id: {rid}")
             recording_ids.add(rid)
+            recording_by_id[rid] = row
             if sid not in sentence_set: result.errors.append(f"recording references unknown sentence: {sid}")
             if row.get("speaker_id") != manifest.get("speaker_id"): result.errors.append(f"recording speaker mismatch: {rid}")
             if audio in paths: result.errors.append(f"duplicate audio_path: {audio}")
             paths.add(audio)
+            if not audio.startswith("wav/") or ".." in Path(audio).parts:
+                result.errors.append(f"unsafe audio_path: {audio}")
             if row.get("status") == "completed":
                 if audio not in names: result.errors.append(f"missing audio: {audio}")
                 else:
                     try:
-                        with wave.open(io.BytesIO(z.read(audio)), "rb") as w:
+                        audio_bytes = z.read(audio)
+                        with wave.open(io.BytesIO(audio_bytes), "rb") as w:
                             if (w.getnchannels(), w.getsampwidth(), w.getframerate()) != (1, 2, 16000): result.errors.append(f"invalid WAV spec: {audio}")
                             if w.getnframes() == 0: result.errors.append(f"empty WAV: {audio}")
                             expected_ms = round(w.getnframes() * 1000 / 16000); actual_ms = int(row.get("duration_ms") or 0)
                             if abs(expected_ms - actual_ms) > 150: result.errors.append(f"duration mismatch: {audio}")
+                        if row.get("audio_sha256") and hashlib.sha256(audio_bytes).hexdigest() != row.get("audio_sha256"):
+                            result.errors.append(f"audio checksum mismatch: {audio}")
                     except Exception as e: result.errors.append(f"invalid WAV {audio}: {e}")
                 if row.get("spoken_transcript", "") and row.get("transcription_status") == "not_annotated": result.errors.append(f"transcript status mismatch: {rid}")
         progress_ids = [r.get("sentence_id") for r in progress]
@@ -97,7 +103,22 @@ def validate_dataset(path: str | Path) -> ValidationResult:
         if set(progress_ids) != sentence_set: result.errors.append("progress does not cover every sentence")
         for row in progress:
             if row.get("sentence_id") not in sentence_set: result.errors.append(f"progress references unknown sentence: {row.get('sentence_id')}")
-            if row.get("status") == "completed" and row.get("selected_recording_id") not in recording_ids: result.errors.append(f"completed progress has no recording: {row.get('sentence_id')}")
+            selected_id = row.get("selected_recording_id", "")
+            selected = recording_by_id.get(selected_id)
+            if row.get("status") == "completed":
+                if selected is None:
+                    result.errors.append(f"completed progress has no recording: {row.get('sentence_id')}")
+                else:
+                    if selected.get("sentence_id") != row.get("sentence_id"):
+                        result.errors.append(f"progress recording sentence mismatch: {row.get('sentence_id')}")
+                    if selected.get("speaker_id") != manifest.get("speaker_id"):
+                        result.errors.append(f"progress recording speaker mismatch: {row.get('sentence_id')}")
+                    if selected.get("status") != "completed" or selected.get("selected") not in ("1", "true", "True"):
+                        result.errors.append(f"progress recording is not selected completed: {row.get('sentence_id')}")
+            elif selected_id:
+                result.errors.append(f"non-completed progress has selected recording: {row.get('sentence_id')}")
+            if row.get("status") == "skipped" and selected is not None:
+                result.errors.append(f"skipped progress has recording: {row.get('sentence_id')}")
         result.stats = {"sentences": len(sentences), "recordings": len(recordings), "progress": len(progress), "completed": sum(r.get("status") == "completed" for r in recordings), "skipped": sum(r.get("status") == "skipped" for r in progress)}
     return result
 
