@@ -1,6 +1,6 @@
-# 方言语料采集 App
+# 方言语音采集 App
 
-这是一个完全离线的 Android 方言语音采集工具。首版内置 `corpus_v1` 统一句库（5,000 条），发音人可以按主题或句号范围选择任务，用自己的方言自然表达书面提示的意思，然后导出可在电脑上校验和合并的 ZIP。
+这是一个完全离线的 Android 方言语音采集工具。当前版本为 **1.1（versionCode 2）**，内置 `corpus_v1` 统一句库（5,000 条），发音人可以按主题或句号范围选择任务，用自己的方言自然表达书面提示的意思，然后导出可在电脑上校验和合并的 ZIP。
 
 ## 构建
 
@@ -14,7 +14,7 @@ printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > local.properties
 ./gradlew assembleDebug
 ```
 
-生成 APK：`app/build/outputs/apk/debug/app-debug.apk`。
+生成 APK：`app/build/outputs/apk/debug/方言语音采集-1.1.apk`。
 
 ## 使用
 
