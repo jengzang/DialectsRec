@@ -1,1 +1,7 @@
 .worktrees/
+local.properties
+.gradle/
+build/
+app/build/
+*.iml
+tools/__pycache__/
