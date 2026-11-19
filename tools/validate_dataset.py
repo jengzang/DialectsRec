@@ -63,7 +63,7 @@ def validate_dataset(path: str | Path) -> ValidationResult:
         progress = _csv(z, "progress.csv", result)
         ids = [r.get("sentence_id", "") for r in sentences]
         if len(ids) != len(set(ids)): result.errors.append("duplicate sentence_id")
-        if any(not i or not r.get("text", "").strip() for i, r in zip(ids, sentences)): result.errors.append("empty sentence ID or text")
+        if any(not i or not (r.get("text", "") or r.get("prompt_text", "")).strip() for i, r in zip(ids, sentences)): result.errors.append("empty sentence ID or text")
         computed = canonical_sentence_hash(sentences)
         if corpus.get("corpus_hash") != computed: result.errors.append("corpus hash mismatch")
         for key in ("corpus_id", "corpus_version", "corpus_hash"):
