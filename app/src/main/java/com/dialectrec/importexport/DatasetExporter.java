@@ -2,6 +2,7 @@ package com.dialectrec.importexport;
 
 import android.content.*;
 import android.database.Cursor;
+import com.dialectrec.BuildConfig;
 import com.dialectrec.data.CorpusDatabase;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -22,7 +23,7 @@ public final class DatasetExporter {
             String corpusHash="";
             try(Cursor c=db.getReadableDatabase().rawQuery("SELECT corpus_hash FROM corpus WHERE corpus_id=? AND corpus_version=?",new String[]{corpusId,version})){if(c.moveToFirst()) corpusHash=c.getString(0);}
             int sentenceCount=db.count(null), completedCount=db.count("completed"), skippedCount=db.count("skipped");
-            put(zip,"manifest.json","{\n  \"schema_version\":\"1.0\",\n  \"export_id\":\""+UUID.randomUUID()+"\",\n  \"exported_at_utc\":\""+exported+"\",\n  \"app_version\":\"1.0\",\n  \"corpus_id\":\""+escape(corpusId)+"\",\n  \"corpus_version\":\""+escape(version)+"\",\n  \"corpus_hash\":\""+escape(corpusHash)+"\",\n  \"speaker_id\":\""+escape(speakerId)+"\",\n  \"sentence_count\":"+sentenceCount+",\n  \"completed_count\":"+completedCount+",\n  \"skipped_count\":"+skippedCount+"\n}");
+            put(zip,"manifest.json","{\n  \"schema_version\":\"1.0\",\n  \"export_id\":\""+UUID.randomUUID()+"\",\n  \"exported_at_utc\":\""+exported+"\",\n  \"app_version\":\""+escape(BuildConfig.VERSION_NAME)+"\",\n  \"corpus_id\":\""+escape(corpusId)+"\",\n  \"corpus_version\":\""+escape(version)+"\",\n  \"corpus_hash\":\""+escape(corpusHash)+"\",\n  \"speaker_id\":\""+escape(speakerId)+"\",\n  \"sentence_count\":"+sentenceCount+",\n  \"completed_count\":"+completedCount+",\n  \"skipped_count\":"+skippedCount+"\n}");
             put(zip,"corpus.json","{\"corpus_id\":\""+escape(corpusId)+"\",\"corpus_version\":\""+escape(version)+"\",\"corpus_hash\":\""+escape(corpusHash)+"\"}");
             String dialect="", localUuid=""; try(Cursor c=db.getReadableDatabase().rawQuery("SELECT dialect,local_uuid FROM speaker WHERE speaker_id=?",new String[]{speakerId})){if(c.moveToFirst()){dialect=c.getString(0);localUuid=c.getString(1);}}
             put(zip,"speaker.json","{\"speaker_id\":\""+escape(speakerId)+"\",\"local_speaker_uuid\":\""+escape(localUuid)+"\",\"dialect\":\""+escape(dialect)+"\"}");

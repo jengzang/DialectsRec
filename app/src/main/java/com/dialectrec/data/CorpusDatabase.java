@@ -40,14 +40,31 @@ public final class CorpusDatabase extends SQLiteOpenHelper {
         }
         if(oldV<3) db.execSQL("ALTER TABLE recording ADD COLUMN audio_source TEXT");
     }
+    public static final class ManifestInfo {
+        public final String id, version, hash;
+        ManifestInfo(String id, String version, String hash) { this.id=id; this.version=version; this.hash=hash; }
+    }
+    public static ManifestInfo parseManifest(String json) {
+        return new ManifestInfo(manifestValue(json, "corpus_id", "dialect_general"), manifestValue(json, "corpus_version", "1.0"), manifestValue(json, "corpus_hash", ""));
+    }
+    private static String manifestValue(String json, String key, String fallback) {
+        Matcher matcher=Pattern.compile("\""+Pattern.quote(key)+"\"\\s*:\\s*\"([^\"]*)\"").matcher(json);
+        return matcher.find()?matcher.group(1):fallback;
+    }
     private static byte[] readAll(InputStream in) throws IOException { ByteArrayOutputStream b=new ByteArrayOutputStream(); byte[] buf=new byte[8192]; int n; while((n=in.read(buf))>=0){if(n>0)b.write(buf,0,n);} return b.toByteArray(); }
+    private ManifestInfo readManifest(Context context) throws IOException {
+        try (InputStream mi=context.getAssets().open("corpus_v1/manifest.json")) {
+            return parseManifest(new String(readAll(mi), StandardCharsets.UTF_8));
+        }
+    }
     public void seed(Context context) throws Exception {
-        if (getSetting("seeded") != null) return;
+        ManifestInfo manifest=readManifest(context);
+        String seeded=getSetting("seeded");
+        if (seeded != null && manifest.version.equals(getSetting("corpus_version"))) return;
         SQLiteDatabase db=getWritableDatabase(); db.beginTransaction();
         try (InputStream in=context.getAssets().open("corpus_v1/sentences.csv")) {
-            List<String[]> rows=CsvReader.read(in); String[] h=rows.remove(0); int id=0;
-            String corpusId="dialect_general", version="1.0", hash="";
-            try (InputStream mi=context.getAssets().open("corpus_v1/manifest.json")) { String m=new String(readAll(mi), StandardCharsets.UTF_8); Matcher mm=Pattern.compile("\"corpus_hash\"\\s*:\\s*\"([^\"]+)\"").matcher(m); if(mm.find()) hash=mm.group(1); }
+            List<String[]> rows=CsvReader.read(in); rows.remove(0); int id=0;
+            String corpusId=manifest.id, version=manifest.version, hash=manifest.hash;
             ContentValues cv=new ContentValues(); cv.put("corpus_id",corpusId);cv.put("corpus_version",version);cv.put("corpus_hash",hash);cv.put("title","统一方言提示句库");cv.put("sentence_count",rows.size());db.insertOrThrow("corpus",null,cv);
             for(String[] r:rows){if(r.length<4||r[0].trim().isEmpty()||r[1].trim().isEmpty())continue; ContentValues v=new ContentValues();v.put("corpus_id",corpusId);v.put("corpus_version",version);v.put("sentence_id",r[0]);v.put("text",r[1]);v.put("category",r.length>2?r[2]:"");v.put("difficulty",r.length>3?r[3]:"short");v.put("order_index",++id);db.insertOrThrow("sentence",null,v);}
             setSetting(db,"seeded","1"); setSetting(db,"corpus_id",corpusId); setSetting(db,"corpus_version",version); db.setTransactionSuccessful();

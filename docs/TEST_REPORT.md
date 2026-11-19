@@ -37,3 +37,13 @@
 - 首次建档后显示“资料已保存”引导页，明确说明选择任务、开始录音、结束保存和进入下一句的操作顺序。
 - 模拟器验证返回键：录音页返回任务选择页，任务选择页返回首页；录音中仍先提示继续录音或放弃本次录音。
 - 新增暖橙色“麦克风 + 方言印章”矢量 Logo，作为启动图标和建档/引导页标识。
+
+## 2026-11-20 回归：句库 2.0 与录音体验
+
+- LLM 句库最终为 5,000 条唯一句子，难度分布 short/situational/narrative = 3,500/1,000/500；全量规则检查通过，corpus hash 为 `1ba47bf4167e2d9e7ef6e805c7ee09672d4f8c815be3a8a0b34f8eb4181fc135`。
+- `python3 -m unittest tools/test_generate_corpus.py tools/test_dataset_tools.py -v`：7 tests passed；Android `testDebugUnitTest`：全部通过；lint 0 errors；`assembleDebug` 成功。
+- 版本：versionCode 3、versionName 1.2，APK：`方言语音采集-1.2.apk`。
+- 模拟器 `dialects_api35` 验证升级后保留本地资料，并从句库 manifest 自动迁移显示 `dialect_general / 2.0`。
+- 录音页显示橙色“正在录音”和实时 `mm:ss` 计时；结束后后台写入 WAV，显示“已保存”；试听期间显示“正在试听当前录音…”，播放完成显示“试听完成，可再次播放。”。
+- “全部句子与状态”使用完整 ListView 展示 5,000 条，不再截断 200 条；分类筛选“家庭”显示 406 条，条目包含 sentence_id、状态、类别和文本。
+- 导出 ZIP 后自动打开 Android 系统分享面板；模拟器显示 Quick Share、Drive、Bluetooth、Gmail 等目标。安装微信的设备会由系统分享面板提供微信目标。
