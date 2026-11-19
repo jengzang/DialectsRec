@@ -45,7 +45,7 @@ public class MainActivity extends Activity {
     private int parseInt(String value,int fallback){try{return Integer.parseInt(value);}catch(Exception ignored){return fallback;}}
     private Button iconButton(String text, int icon) { Button b=button(text); b.setCompoundDrawablesWithIntrinsicBounds(icon,0,0,0); b.setCompoundDrawablePadding(dp(8)); return b; }
     private GradientDrawable cardBackground(int color) { GradientDrawable d=new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(14)); return d; }
-    private void stopUiTicker() { if(timerTicker!=null){uiHandler.removeCallbacks(timerTicker);timerTicker=null;} }
+    private void stopUiTicker() { if(timerTicker!=null) uiHandler.removeCallbacks(timerTicker); }
     private void updateRecordingCard(TextView state, TextView timer, boolean recording) {
         View container=(View)state.getParent().getParent();
         if(recording){ state.setText("正在录音"); state.setTextColor(0xffffffff); timer.setTextColor(0xffffffff); container.setBackground(cardBackground(0xffe87524)); }
@@ -90,7 +90,13 @@ public class MainActivity extends Activity {
     private void showSettings(){screen="settings";LinearLayout l=column();l.addView(title("设置与帮助"));TextView t=new TextView(this);t.setText("发音人 ID："+db.getSetting("speaker_id")+"\n方言点："+db.getSetting("dialect")+"\n\n音频目标：PCM WAV / 16 kHz / 16-bit / mono\n录音文件保存在 App 专属目录。导出 ZIP 后不会自动删除源文件。\n\n如果清除 App 数据或卸载，未导出的录音可能丢失，请及时导出。");t.setTextSize(16);l.addView(t);Button back=button("返回首页");back.setOnClickListener(v->showHome());l.addView(back);page(l);}
     private void pickImport(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("text/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,REQ_IMPORT);}
     private void pickExport(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("application/zip");i.putExtra(Intent.EXTRA_TITLE,"dialect_"+db.getSetting("speaker_id")+"_"+System.currentTimeMillis()+".zip");startActivityForResult(i,REQ_EXPORT);}
-    @Override protected void onActivityResult(int r,int code,Intent data){super.onActivityResult(r,code,data);if(code!=RESULT_OK||data==null)return;if(r==REQ_IMPORT){try{String name=data.getData().getLastPathSegment();boolean csv=name!=null&&name.toLowerCase(Locale.ROOT).endsWith("csv");db.importCorpus(getContentResolver().openInputStream(data.getData()),name,csv);toast("句库导入成功；请重新选择任务");}catch(Exception e){error("句库导入失败",e);}}else if(r==REQ_EXPORT){exportUri=data.getData();new Thread(()->{try{DatasetExporter.export(this,db,exportUri);runOnUiThread(()->{toast("ZIP 导出成功，正在打开分享面板"); shareExport(exportUri);});}catch(Exception e){runOnUiThread(()->error("导出失败",e));}}).start();}}
+    @Override protected void onActivityResult(int r,int code,Intent data){super.onActivityResult(r,code,data);if(code!=RESULT_OK||data==null)return;if(r==REQ_IMPORT){try{String name=data.getData().getLastPathSegment();boolean csv=name!=null&&name.toLowerCase(Locale.ROOT).endsWith("csv");db.importCorpus(getContentResolver().openInputStream(data.getData()),name,csv);toast("句库导入成功；请重新选择任务");}catch(Exception e){error("句库导入失败",e);}}else if(r==REQ_EXPORT){exportUri=data.getData();new Thread(()->{try{DatasetExporter.export(this,db,exportUri);runOnUiThread(()->showExportChoice());}catch(Exception e){runOnUiThread(()->error("导出失败",e));}}).start();}}
+    private void showExportChoice(){
+        new AlertDialog.Builder(this).setTitle("ZIP 已保存").setMessage("请选择下一步：分享到微信，或仅保存在本地。")
+            .setPositiveButton(ExportChoice.SHARE_WECHAT.label,(d,w)->shareExport(exportUri))
+            .setNegativeButton(ExportChoice.LOCAL_ONLY.label,(d,w)->toast("ZIP 已保存在你选择的位置"))
+            .show();
+    }
     private void shareExport(Uri uri){
         if(uri==null)return;
         Intent share=ShareIntentFactory.create(uri);
@@ -101,6 +107,7 @@ public class MainActivity extends Activity {
     private void error(String title,Exception e){new AlertDialog.Builder(this).setTitle(title).setMessage(String.valueOf(e.getMessage())).setPositiveButton("知道了",null).show();}
     @SuppressLint("GestureBackNavigation")
     @Override public void onBackPressed(){
+        if(saving){toast("正在保存录音，请稍候");return;}
         if(recorder!=null&&recorder.isRecording()){
             new AlertDialog.Builder(this).setTitle("正在录音").setMessage("请先结束并保存，或放弃本次录音。已有录音不会被删除。")
                 .setPositiveButton("继续录音",null)
