@@ -1,0 +1,8 @@
+{
+  "corpus_id": "dialect_general",
+  "corpus_version": "1.0",
+  "sentence_count": 5000,
+  "corpus_hash": "ee76caa69692a055f7229fa35d37d0b0a3ae04ce01860085c6056eb842f5571c",
+  "hash_algorithm": "sha256(join(fields, U+001F) + LF)",
+  "schema_version": "1.0"
+}

@@ -1,0 +1,32 @@
+package com.dialectrec.audio;
+
+import android.annotation.SuppressLint;
+
+import android.media.*;
+import android.os.Process;
+import java.io.*;
+import java.util.UUID;
+
+public final class RecorderEngine {
+    public interface Listener { void onError(String message); }
+    private final Listener listener; private AudioRecord recorder; private Thread thread; private File pcmFile; private int actualRate; private volatile boolean recording;
+    public RecorderEngine(Listener listener) { this.listener = listener; }
+    public synchronized boolean isRecording() { return recording; }
+    @SuppressLint("MissingPermission")
+    public synchronized boolean start(File directory) {
+        if (recording) return false;
+        int[] rates = {16000, 48000, 44100};
+        for (int rate : rates) {
+            int min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            if (min <= 0) continue;
+            try { recorder = new AudioRecord(MediaRecorder.AudioSource.UNPROCESSED, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 2, 4096)); if (recorder.getState() == AudioRecord.STATE_INITIALIZED) { actualRate=rate; break; } recorder.release(); recorder=null; } catch (Exception ignored) { }
+            try { recorder = new AudioRecord(MediaRecorder.AudioSource.MIC, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 2, 4096)); if (recorder.getState() == AudioRecord.STATE_INITIALIZED) { actualRate=rate; break; } recorder.release(); recorder=null; } catch (Exception ignored) { }
+        }
+        if (recorder == null) { listener.onError("录音设备初始化失败"); return false; }
+        directory.mkdirs(); pcmFile = new File(directory, UUID.randomUUID() + ".pcm.tmp"); recording=true; recorder.startRecording();
+        thread = new Thread(() -> captureLoop(), "dialect-audio-capture"); thread.start(); return true;
+    }
+    private void captureLoop() { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO); byte[] buffer = new byte[8192]; try (FileOutputStream out = new FileOutputStream(pcmFile)) { while (recording) { int n=recorder.read(buffer,0,buffer.length); if(n>0) out.write(buffer,0,n); else if(n<0) throw new IOException("AudioRecord read error " + n); } } catch(Exception e) { if(recording) listener.onError("录音写入失败：" + e.getMessage()); } }
+    public synchronized File stop(File outputWav) throws Exception { if (!recording) return null; recording=false; try { recorder.stop(); } catch(Exception ignored) {} if(thread!=null) thread.join(3000); recorder.release(); recorder=null; if(pcmFile.length()<2) throw new IOException("录音为空"); WavWriter.writeFromPcm(outputWav, pcmFile, actualRate, 1, 16); if(actualRate!=16000) throw new IOException("设备仅支持"+actualRate+"Hz，首版需要16kHz"); if(!WavInspector.inspect(outputWav).valid) throw new IOException("WAV规格校验失败"); if(!pcmFile.delete()) pcmFile.deleteOnExit(); return outputWav; }
+    public synchronized void cancel() { if(!recording)return; recording=false; try{recorder.stop();recorder.release();}catch(Exception ignored){} if(thread!=null)try{thread.join(1000);}catch(InterruptedException ignored){} if(pcmFile!=null)pcmFile.delete(); recorder=null; }
+}
