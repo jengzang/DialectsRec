@@ -66,6 +66,9 @@ def validate_dataset(path: str | Path) -> ValidationResult:
         if any(not i or not (r.get("text", "") or r.get("prompt_text", "")).strip() for i, r in zip(ids, sentences)): result.errors.append("empty sentence ID or text")
         computed = canonical_sentence_hash(sentences)
         if corpus.get("corpus_hash") != computed: result.errors.append("corpus hash mismatch")
+        for key in ("schema_version", "export_id", "corpus_id", "corpus_version", "corpus_hash", "speaker_id"):
+            if not manifest.get(key): result.errors.append(f"manifest missing {key}")
+        if not speaker.get("speaker_id"): result.errors.append("speaker missing speaker_id")
         for key in ("corpus_id", "corpus_version", "corpus_hash"):
             if manifest.get(key) != corpus.get(key): result.errors.append(f"manifest/corpus mismatch: {key}")
         if manifest.get("speaker_id") != speaker.get("speaker_id"): result.errors.append("manifest/speaker mismatch")
@@ -75,6 +78,7 @@ def validate_dataset(path: str | Path) -> ValidationResult:
             if rid in recording_ids: result.errors.append(f"duplicate recording_id: {rid}")
             recording_ids.add(rid)
             if sid not in sentence_set: result.errors.append(f"recording references unknown sentence: {sid}")
+            if row.get("speaker_id") != manifest.get("speaker_id"): result.errors.append(f"recording speaker mismatch: {rid}")
             if audio in paths: result.errors.append(f"duplicate audio_path: {audio}")
             paths.add(audio)
             if row.get("status") == "completed":
@@ -84,8 +88,13 @@ def validate_dataset(path: str | Path) -> ValidationResult:
                         with wave.open(io.BytesIO(z.read(audio)), "rb") as w:
                             if (w.getnchannels(), w.getsampwidth(), w.getframerate()) != (1, 2, 16000): result.errors.append(f"invalid WAV spec: {audio}")
                             if w.getnframes() == 0: result.errors.append(f"empty WAV: {audio}")
+                            expected_ms = round(w.getnframes() * 1000 / 16000); actual_ms = int(row.get("duration_ms") or 0)
+                            if abs(expected_ms - actual_ms) > 150: result.errors.append(f"duration mismatch: {audio}")
                     except Exception as e: result.errors.append(f"invalid WAV {audio}: {e}")
                 if row.get("spoken_transcript", "") and row.get("transcription_status") == "not_annotated": result.errors.append(f"transcript status mismatch: {rid}")
+        progress_ids = [r.get("sentence_id") for r in progress]
+        if len(progress_ids) != len(set(progress_ids)): result.errors.append("duplicate progress sentence_id")
+        if set(progress_ids) != sentence_set: result.errors.append("progress does not cover every sentence")
         for row in progress:
             if row.get("sentence_id") not in sentence_set: result.errors.append(f"progress references unknown sentence: {row.get('sentence_id')}")
             if row.get("status") == "completed" and row.get("selected_recording_id") not in recording_ids: result.errors.append(f"completed progress has no recording: {row.get('sentence_id')}")

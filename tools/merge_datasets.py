@@ -48,7 +48,8 @@ def merge_datasets(inputs, output: str | Path) -> MergeResult:
                     continue
                 seen_audio[key] = digest; target = output / "wav" / sid / f"{rec['sentence_id']}.wav"; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
                 rec = dict(rec); rec["audio_path"] = f"wav/{sid}/{rec['sentence_id']}.wav"; recordings.append(rec)
-            progress.extend(_rows(z, "progress.csv"))
+            for row in _rows(z, "progress.csv"):
+                row = dict(row); row["speaker_id"] = sid; progress.append(row)
     with (output / "sentences.csv").open("w", encoding="utf-8", newline="") as f:
         if sentence_rows: w = csv.DictWriter(f, fieldnames=sentence_rows[0].keys()); w.writeheader(); w.writerows(sentence_rows)
     with (output / "speakers.csv").open("w", encoding="utf-8", newline="") as f:
