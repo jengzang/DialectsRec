@@ -65,3 +65,5 @@ python3 tools/review_jnu_corpus.py --source-dir /path/to/暨大 --workers 5
 ## 已知限制
 
 当前实现优先保证离线采集、句子关联、WAV 事务和导出协议。首版没有自动转写、后台录音、云同步或实时音量分析。设备不支持 16 kHz 原生采集时会提示设备能力；没有真实麦克风的模拟器无法证明实机录音质量，需要在至少三台真实 Android 手机上复测。
+
+本仓库提供 `.githooks/pre-push` 防误传检查：检查待推送分支的**全部可达历史**，有暨大私有目录或 APK/ZIP/录音等产物就拒绝推送。当前本机已启用。新克隆可用 `git config core.hooksPath .githooks` 启用；手动检查用 `python3 tools/check_corpus_privacy.py HEAD`。不要推送本地私有备份分支，也不要使用 `git push --all`。
