@@ -26,6 +26,6 @@
 - [x] 安装升级至模拟器 `dialects_api35`。使用 uiautomator 和 SQLite 快照核对旧任务迁移、新任务随机队列、上下句、重启恢复及原句号录音保存/跳过、固定进度列表与分类。
 - [x] 更新 `docs/TEST_REPORT.md`，记录实际结果和 APK。
 - [x] 代码复核，修正实际发现的问题并复验。
-- [ ] 提交并合回 main，原目录构建 1.5 APK，推送 `origin main`。
+- [x] 提交并合回 main，原目录构建 1.5 APK，推送 `origin main`。
 
 附加回归：实际 ZIP 暴露旧句库元数据丢失，已修复并通过 native 回归及真实 schema 3→4 升级、ZIP 校验；详见 TEST_REPORT.md。
