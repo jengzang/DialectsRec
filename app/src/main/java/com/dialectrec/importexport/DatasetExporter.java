@@ -35,10 +35,10 @@ public final class DatasetExporter {
     }
     private static String sentencesCsv(CorpusDatabase db){
         StringBuilder b=new StringBuilder("sentence_id,prompt_text,text,category,difficulty,length_bucket,notes,order_index\n");
-        try(Cursor c=db.getReadableDatabase().rawQuery("SELECT sentence_id,text,category,difficulty,order_index FROM sentence WHERE corpus_id=? AND corpus_version=? ORDER BY order_index",new String[]{db.getSetting("corpus_id"),db.getSetting("corpus_version")})){
+        try(Cursor c=db.getReadableDatabase().rawQuery("SELECT sentence_id,text,category,difficulty,order_index,length_bucket,notes FROM sentence WHERE corpus_id=? AND corpus_version=? ORDER BY order_index",new String[]{db.getSetting("corpus_id"),db.getSetting("corpus_version")})){
             while(c.moveToNext()){
-                String difficulty=c.getString(3); String bucket=difficulty.equals("narrative")?"long":difficulty.equals("situational")?"medium":"short";
-                b.append(csv(c.getString(0))).append(',').append(csv(c.getString(1))).append(',').append(csv(c.getString(1))).append(',').append(csv(c.getString(2))).append(',').append(csv(difficulty)).append(',').append(bucket).append(",,").append(c.getInt(4)).append('\n');
+                String difficulty=c.getString(3); String bucket=c.getString(5);if(bucket==null||bucket.isEmpty())bucket=difficulty.equals("narrative")?"long":difficulty.equals("situational")?"medium":"short";
+                b.append(csv(c.getString(0))).append(',').append(csv(c.getString(1))).append(',').append(csv(c.getString(1))).append(',').append(csv(c.getString(2))).append(',').append(csv(difficulty)).append(',').append(csv(bucket)).append(',').append(csv(c.getString(6))).append(',').append(c.getInt(4)).append('\n');
             }
         }
         return b.toString();

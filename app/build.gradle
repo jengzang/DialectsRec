@@ -1,7 +1,10 @@
 apply plugin: 'com.android.application'
 
 android { namespace 'com.dialectrec'; compileSdk 36
-    defaultConfig { applicationId 'com.dialectrec'; minSdk 26; targetSdk 36; versionCode 5; versionName '1.4' }
+    defaultConfig {
+        applicationId 'com.dialectrec'; minSdk 26; targetSdk 36; versionCode 6; versionName '1.5'
+        testInstrumentationRunner 'com.dialectrec.TaskOrderInstrumentation'
+    }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildFeatures { buildConfig true }
     applicationVariants.all { variant ->

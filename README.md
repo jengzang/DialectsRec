@@ -1,6 +1,6 @@
 # 方言语音采集 App
 
-这是一个完全离线的 Android 方言语音采集工具。当前版本为 **1.1（versionCode 2）**，内置 `corpus_v1` 统一句库（5,000 条），发音人可以按主题或句号范围选择任务，用自己的方言自然表达书面提示的意思，然后导出可在电脑上校验和合并的 ZIP。
+这是一个完全离线的 Android 方言语音采集工具。当前版本为 **1.5（versionCode 6）**，内置 `corpus_v1` 统一句库（5,000 条），发音人可以按主题或句号范围选择任务，用自己的方言自然表达书面提示的意思，然后导出可在电脑上校验和合并的 ZIP。
 
 ## 构建
 
@@ -14,11 +14,22 @@ printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > local.properties
 ./gradlew assembleDebug
 ```
 
-生成 APK：`app/build/outputs/apk/debug/方言语音采集-1.1.apk`。
+生成 APK：`app/build/outputs/apk/debug/方言语音采集-1.5.apk`。
 
 ## 使用
 
 首次启动建立发音人 ID 和方言点。首页可选择主题和句号范围，录音页支持录音、停止保存、试听、跳过、上一句和下一句。停止后只有 WAV 校验和数据库写入都成功才会标记完成。导出使用系统文件选择器，源录音不会自动删除。
+
+创建采集任务时随机打乱符合条件的句子，队列内无重复、无遗漏。“继续上次任务”恢复原队列和当前位置；重新选择新任务会重新随机。首页“全部句子与状态”及分类进度始终按原句号顺序展示，录音文件和导出仍关联原始 sentence_id。
+
+数据库恢复回归可在模拟器上运行（使用独立测试数据库，不修改采集数据）：
+
+```bash
+./gradlew assembleDebug assembleDebugAndroidTest
+adb install -r app/build/outputs/apk/debug/方言语音采集-1.5.apk
+adb install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument -w com.dialectrec.test/com.dialectrec.TaskOrderInstrumentation
+```
 
 App 只申请麦克风权限，不申请联网权限。录音目标是 PCM signed 16-bit little-endian、16 kHz、单声道 WAV；没有麦克风权限时仍可以浏览句库和导出已有数据。
 
