@@ -1,9 +1,15 @@
 package com.dialectrec;
 
 import org.junit.Test;
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 public class RecordingUiStateTest {
+    @Test public void playbackRequiresSavedAudioAndIdleRecorder() {
+        assertTrue(RecordingUiState.canPlay(true,false,false));
+        assertFalse(RecordingUiState.canPlay(false,false,false));
+        assertFalse(RecordingUiState.canPlay(true,true,false));
+        assertFalse(RecordingUiState.canPlay(true,false,true));
+    }
     @Test public void playbackStatesHaveClearUserLabels() {
         assertEquals("未试听", RecordingUiState.PLAYBACK_IDLE.label);
         assertEquals("正在试听", RecordingUiState.PLAYBACK_PLAYING.label);

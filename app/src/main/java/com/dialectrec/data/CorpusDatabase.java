@@ -76,19 +76,94 @@ public final class CorpusDatabase extends SQLiteOpenHelper {
             return parseManifest(new String(readAll(mi), StandardCharsets.UTF_8));
         }
     }
+    public static final class CorpusInfo {
+        public final String id,version,hash,title; public final int count;
+        CorpusInfo(String id,String version,String hash,String title,int count){this.id=id;this.version=version;this.hash=hash;this.title=title;this.count=count;}
+    }
+    public List<CorpusInfo> availableCorpora(){
+        List<CorpusInfo> out=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT corpus_id,corpus_version,corpus_hash,title,sentence_count FROM corpus ORDER BY CASE corpus_id WHEN 'jnu_chaozhou' THEN 0 WHEN 'jnu_suzhou' THEN 1 WHEN 'dialect_general' THEN 2 WHEN 'jnu_local' THEN 3 ELSE 4 END, title, corpus_version",null)){
+            while(c.moveToNext())out.add(new CorpusInfo(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getInt(4)));
+        }
+        return out;
+    }
+    public String currentTitle(){
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT title FROM corpus WHERE corpus_id=? AND corpus_version=?",new String[]{getSetting("corpus_id"),getSetting("corpus_version")})){
+            return c.moveToFirst()?c.getString(0):"未选择句库";
+        }
+    }
     public void seed(Context context) throws Exception {
-        ManifestInfo manifest=readManifest(context);
-        String seeded=getSetting("seeded");
-        if (seeded != null && manifest.version.equals(getSetting("corpus_version"))) return;
-        SQLiteDatabase db=getWritableDatabase(); db.beginTransaction();
-        try (InputStream in=context.getAssets().open("corpus_v1/sentences.csv")) {
-            List<String[]> rows=CsvReader.read(in); rows.remove(0); int id=0;
-            String corpusId=manifest.id, version=manifest.version, hash=manifest.hash;
-            ContentValues cv=new ContentValues(); cv.put("corpus_id",corpusId);cv.put("corpus_version",version);cv.put("corpus_hash",hash);cv.put("title","统一方言提示句库");cv.put("sentence_count",rows.size());db.insertOrThrow("corpus",null,cv);
-            for(String[] r:rows){if(r.length<4||r[0].trim().isEmpty()||r[1].trim().isEmpty())continue; ContentValues v=new ContentValues();v.put("corpus_id",corpusId);v.put("corpus_version",version);v.put("sentence_id",r[0]);v.put("text",r[1]);v.put("category",r.length>2?r[2]:"");v.put("difficulty",r.length>3?r[3]:"short");v.put("length_bucket",r.length>4?r[4]:"");v.put("notes",r.length>5?r[5]:"");v.put("order_index",++id);db.insertOrThrow("sentence",null,v);}
-            clearTask(db);
-            setSetting(db,"seeded","1"); setSetting(db,"corpus_id",corpusId); setSetting(db,"corpus_version",version); db.setTransactionSuccessful();
-        } finally { db.endTransaction(); }
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            for(CorpusCatalog.Entry entry:CorpusCatalog.BUNDLED)installBundled(db,context,entry);
+            if(getSetting("corpus_id")==null){
+                try(Cursor c=db.rawQuery("SELECT corpus_version FROM corpus WHERE corpus_id=?",new String[]{CorpusCatalog.DEFAULT_ID})){
+                    if(!c.moveToFirst())throw new IOException("缺少默认句库");
+                    setSetting(db,"corpus_id",CorpusCatalog.DEFAULT_ID);setSetting(db,"corpus_version",c.getString(0));
+                }
+            }
+            setSetting(db,"seeded","1");db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+    }
+    private void installBundled(SQLiteDatabase db,Context context,CorpusCatalog.Entry entry) throws Exception {
+        ManifestInfo manifest;
+        try(InputStream in=context.getAssets().open(entry.directory+"/manifest.json")){
+            manifest=parseManifest(new String(readAll(in),StandardCharsets.UTF_8));
+        }
+        try(Cursor c=db.rawQuery("SELECT corpus_hash FROM corpus WHERE corpus_id=? AND corpus_version=?",new String[]{manifest.id,manifest.version})){
+            if(c.moveToFirst()){
+                if(!manifest.hash.equals(c.getString(0)))throw new IOException("同版本句库校验值变化："+entry.title);
+                ContentValues title=new ContentValues();title.put("title",entry.title);
+                db.update("corpus",title,"corpus_id=? AND corpus_version=?",new String[]{manifest.id,manifest.version});return;
+            }
+        }
+        List<Sentence> sentences=new ArrayList<>();
+        try(InputStream in=context.getAssets().open(entry.directory+"/sentences.csv")){
+            List<String[]> rows=CsvReader.read(in);if(rows.isEmpty())throw new IOException("句库为空");rows.remove(0);
+            for(String[] row:rows){
+                if(row.length!=6||row[0].isEmpty()||row[1].isEmpty())throw new IOException("句库格式错误："+entry.title);
+                sentences.add(new Sentence(row[0],row[1],row[2],row[3],row[4],row[5]));
+            }
+        }
+        if(!manifest.hash.equals(CorpusHash.sha256(sentences)))throw new IOException("句库校验失败："+entry.title);
+        ContentValues cv=new ContentValues();cv.put("corpus_id",manifest.id);cv.put("corpus_version",manifest.version);cv.put("corpus_hash",manifest.hash);cv.put("title",entry.title);cv.put("sentence_count",sentences.size());db.insertOrThrow("corpus",null,cv);
+        int order=0;
+        for(Sentence s:sentences){
+            ContentValues v=new ContentValues();v.put("corpus_id",manifest.id);v.put("corpus_version",manifest.version);v.put("sentence_id",s.id);v.put("text",s.text);v.put("category",s.category);v.put("difficulty",s.difficulty);v.put("length_bucket",s.lengthBucket);v.put("notes",s.notes);v.put("order_index",++order);db.insertOrThrow("sentence",null,v);
+        }
+    }
+    public void selectCorpus(String id,String version){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            try(Cursor c=db.rawQuery("SELECT 1 FROM corpus WHERE corpus_id=? AND corpus_version=?",new String[]{id,version})){
+                if(!c.moveToFirst())throw new IllegalArgumentException("句库不存在");
+            }
+            if(!Objects.equals(id,getSetting("corpus_id"))||!Objects.equals(version,getSetting("corpus_version"))){
+                archiveTask(db);setSetting(db,"corpus_id",id);setSetting(db,"corpus_version",version);restoreTask(db);
+            }
+            db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+    }
+    private String taskNamespace(){
+        StringBuilder key=new StringBuilder("saved_task.");
+        for(String field:new String[]{"speaker_id","corpus_id","corpus_version"}){
+            String value=getSetting(field);if(value==null)return null;
+            key.append(value.length()).append(':').append(value).append('|');
+        }
+        return key.append('.').toString();
+    }
+    private void archiveTask(SQLiteDatabase db){
+        String prefix=taskNamespace();if(prefix==null||!hasTaskForCurrentContext())return;
+        try(Cursor c=db.rawQuery("SELECT key,value FROM settings WHERE key GLOB 'task_*'",null)){
+            while(c.moveToNext())setSetting(db,prefix+c.getString(0),c.getString(1));
+        }
+    }
+    private void restoreTask(SQLiteDatabase db){
+        clearTask(db);String prefix=taskNamespace();if(prefix==null)return;
+        // Prefix comparison is literal: speaker IDs can contain SQL wildcard characters.
+        try(Cursor c=db.rawQuery("SELECT key,value FROM settings WHERE substr(key,1,length(?))=?",new String[]{prefix,prefix})){
+            while(c.moveToNext())setSetting(db,c.getString(0).substring(prefix.length()),c.getString(1));
+        }
     }
     private void setSetting(SQLiteDatabase db,String k,String v){ContentValues c=new ContentValues();c.put("key",k);c.put("value",v);db.insertWithOnConflict("settings",null,c,SQLiteDatabase.CONFLICT_REPLACE);}
     public String getSetting(String key){try(Cursor c=getReadableDatabase().query("settings",new String[]{"value"},"key=?",new String[]{key},null,null,null)){return c.moveToFirst()?c.getString(0):null;}}
@@ -105,6 +180,7 @@ public final class CorpusDatabase extends SQLiteOpenHelper {
             setSetting(db,"task_speaker_id",getSetting("speaker_id"));
             setSetting(db,"task_corpus_id",getSetting("corpus_id"));
             setSetting(db,"task_corpus_version",getSetting("corpus_version"));
+            archiveTask(db);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
@@ -117,11 +193,31 @@ public final class CorpusDatabase extends SQLiteOpenHelper {
             &&Objects.equals(getSetting("task_corpus_id"),getSetting("corpus_id"))
             &&Objects.equals(getSetting("task_corpus_version"),getSetting("corpus_version"));
     }
-    public void saveSpeaker(String id,String dialect){SQLiteDatabase db=getWritableDatabase();ContentValues c=new ContentValues();c.put("speaker_id",id);c.put("dialect",dialect);c.put("local_uuid",java.util.UUID.randomUUID().toString());if(db.update("speaker",c,"speaker_id=?",new String[]{id})==0)db.insertOrThrow("speaker",null,c);setSetting("speaker_id",id);setSetting("dialect",dialect);}
+    public void saveSpeaker(String id,String dialect){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{
+            boolean changed=!Objects.equals(id,getSetting("speaker_id"));if(changed)archiveTask(db);
+            ContentValues c=new ContentValues();c.put("speaker_id",id);c.put("dialect",dialect);
+            if(db.update("speaker",c,"speaker_id=?",new String[]{id})==0){c.put("local_uuid",UUID.randomUUID().toString());db.insertOrThrow("speaker",null,c);}
+            setSetting(db,"speaker_id",id);setSetting(db,"dialect",dialect);if(changed)restoreTask(db);db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+    }
     public List<Sentence> list(String category,int start,int end){List<Sentence> out=new ArrayList<>();StringBuilder q=new StringBuilder("SELECT sentence_id,text,category,difficulty,length_bucket,notes FROM sentence WHERE corpus_id=? AND corpus_version=?");List<String>a=new ArrayList<>();a.add(getSetting("corpus_id"));a.add(getSetting("corpus_version"));if(category!=null&&!category.isEmpty()){q.append(" AND category=?");a.add(category);}q.append(" AND order_index BETWEEN ? AND ? ORDER BY order_index");a.add(String.valueOf(Math.max(1,start)));a.add(String.valueOf(Math.max(start,end)));try(Cursor c=getReadableDatabase().rawQuery(q.toString(),a.toArray(new String[0]))){while(c.moveToNext())out.add(new Sentence(c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getString(4),c.getString(5)));}return out;}
     public List<String> categories(){List<String> out=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT DISTINCT category FROM sentence WHERE corpus_id=? AND corpus_version=? ORDER BY category",new String[]{getSetting("corpus_id"),getSetting("corpus_version")})){while(c.moveToNext())out.add(c.getString(0));}return out;}
-    public int count(String status){
-        String sid=getSetting("speaker_id"), cid=getSetting("corpus_id"), ver=getSetting("corpus_version");
+    public static final class ContextSnapshot {
+        public final String speakerId,corpusId,version;
+        ContextSnapshot(String speakerId,String corpusId,String version){this.speakerId=speakerId;this.corpusId=corpusId;this.version=version;}
+    }
+    public ContextSnapshot currentContext(){
+        // One SQLite statement sees all three settings from the same committed state.
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT (SELECT value FROM settings WHERE key='speaker_id'),(SELECT value FROM settings WHERE key='corpus_id'),(SELECT value FROM settings WHERE key='corpus_version')",null)){
+            if(!c.moveToFirst())throw new IllegalStateException("缺少采集上下文");
+            return new ContextSnapshot(c.getString(0),c.getString(1),c.getString(2));
+        }
+    }
+    public int count(String status){return count(currentContext(),status);}
+    public int count(ContextSnapshot snapshot,String status){
+        String sid=snapshot.speakerId, cid=snapshot.corpusId, ver=snapshot.version;
         if(status==null){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM sentence WHERE corpus_id=? AND corpus_version=?",new String[]{cid,ver})){return c.moveToFirst()?c.getInt(0):0;}}
         String condition=status.equals("completed")?"p.status='completed'":status.equals("skipped")?"p.status='skipped'":"p.status IS NULL OR p.status='not_recorded'";
         String q="SELECT COUNT(*) FROM sentence s LEFT JOIN progress p ON p.sentence_id=s.sentence_id AND p.speaker_id=? AND p.corpus_id=? AND p.corpus_version=? WHERE s.corpus_id=? AND s.corpus_version=? AND ("+condition+")";
@@ -138,7 +234,7 @@ public final class CorpusDatabase extends SQLiteOpenHelper {
             for(String[] r:all){if(r.length<=textCol||r[textCol].trim().isEmpty())continue; String id=idCol>=0&&r.length>idCol&&!r[idCol].trim().isEmpty()?r[idCol]:String.format(Locale.ROOT,"S%06d",n);if(!id.matches("[A-Za-z0-9._-]+"))throw new IOException("sentence_id 含不安全字符："+id);String cat=catCol>=0&&r.length>catCol?r[catCol]:"导入";String diff=diffCol>=0&&r.length>diffCol&&!r[diffCol].isEmpty()?r[diffCol]:"short";rows.add(new Sentence(id,r[textCol],cat,diff,bucketCol>=0&&r.length>bucketCol?r[bucketCol]:"",notesCol>=0&&r.length>notesCol?r[notesCol]:""));n++;}
         } else { BufferedReader br=new BufferedReader(new InputStreamReader(input,StandardCharsets.UTF_8)); String line; int n=1; while((line=br.readLine())!=null){if(!line.trim().isEmpty())rows.add(new Sentence(String.format(Locale.ROOT,"S%06d",n++),line.trim(),"导入","short"));} }
         if(rows.isEmpty()) throw new IOException("句库没有有效句子"); Set<String> ids=new HashSet<>(); for(Sentence row:rows) if(!ids.add(row.id)) throw new IOException("重复 sentence_id："+row.id); String corpusId="import_"+System.currentTimeMillis(), version="1.0", hash=CorpusHash.sha256(rows); SQLiteDatabase db=getWritableDatabase(); db.beginTransaction();
-        try{ContentValues cv=new ContentValues();cv.put("corpus_id",corpusId);cv.put("corpus_version",version);cv.put("corpus_hash",hash);cv.put("title",title);cv.put("sentence_count",rows.size());db.insertOrThrow("corpus",null,cv);int order=0;for(Sentence s:rows){ContentValues v=new ContentValues();v.put("corpus_id",corpusId);v.put("corpus_version",version);v.put("sentence_id",s.id);v.put("text",s.text);v.put("category",s.category);v.put("difficulty",s.difficulty);v.put("length_bucket",s.lengthBucket);v.put("notes",s.notes);v.put("order_index",++order);db.insertOrThrow("sentence",null,v);}clearTask(db);setSetting(db,"corpus_id",corpusId);setSetting(db,"corpus_version",version);db.setTransactionSuccessful();}finally{db.endTransaction();}
+        try{archiveTask(db);ContentValues cv=new ContentValues();cv.put("corpus_id",corpusId);cv.put("corpus_version",version);cv.put("corpus_hash",hash);cv.put("title",title);cv.put("sentence_count",rows.size());db.insertOrThrow("corpus",null,cv);int order=0;for(Sentence s:rows){ContentValues v=new ContentValues();v.put("corpus_id",corpusId);v.put("corpus_version",version);v.put("sentence_id",s.id);v.put("text",s.text);v.put("category",s.category);v.put("difficulty",s.difficulty);v.put("length_bucket",s.lengthBucket);v.put("notes",s.notes);v.put("order_index",++order);db.insertOrThrow("sentence",null,v);}clearTask(db);setSetting(db,"corpus_id",corpusId);setSetting(db,"corpus_version",version);db.setTransactionSuccessful();}finally{db.endTransaction();}
         return corpusId;
     }
 

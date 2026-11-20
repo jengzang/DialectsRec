@@ -6,7 +6,7 @@ public final class NavigationPolicy {
 
     public static String backTarget(String screen, boolean recording) {
         if ("recording".equals(screen)) return recording ? "recording" : "task";
-        if ("task".equals(screen) || "list".equals(screen) || "settings".equals(screen)) return "home";
+        if ("corpus".equals(screen) || "task".equals(screen) || "list".equals(screen) || "settings".equals(screen)) return "home";
         if ("guide".equals(screen)) return "onboarding";
         return "exit";
     }

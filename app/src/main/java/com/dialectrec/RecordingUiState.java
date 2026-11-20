@@ -15,5 +15,8 @@ public final class RecordingUiState {
         public final String label;
         Playback(String label) { this.label = label; }
     }
+    public static boolean canPlay(boolean hasSavedAudio, boolean recording, boolean saving) {
+        return hasSavedAudio && !recording && !saving;
+    }
     private RecordingUiState() {}
 }

@@ -4,6 +4,10 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class NavigationPolicyTest {
+    @Test public void backFromCorpusSelectionReturnsHome() {
+        assertEquals("home", NavigationPolicy.backTarget("corpus", false));
+    }
+
     @Test public void backFromTaskReturnsHome() {
         assertEquals("home", NavigationPolicy.backTarget("task", false));
     }

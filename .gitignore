@@ -5,3 +5,14 @@ build/
 app/build/
 *.iml
 tools/__pycache__/
+
+# Licensed JNU material is local only; never publish source or derived review data.
+/docs/暨大/
+/docs/corpus-review/jnu-v*/
+/app/src/main/assets/corpus_jnu_*/
+*.apk
+*.aab
+*.zip
+*.db
+*.wav
+*.pcm.tmp
